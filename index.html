@@ -1,0 +1,1949 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Облачные базы данных: архитектура, масштабирование и аналитика</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'Inter', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            void: '#060913',
+            surface: '#0d1324',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    /* Базовые настройки и скрытие горизонтального скролла */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #060913;
+      color: #f1f5f9;
+      overflow: hidden;
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    }
+
+    /* Тонкий кастомный скроллбар внутри слайдов */
+    .slide-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+    .slide-scroll::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .slide-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.14);
+      border-radius: 9999px;
+    }
+    .slide-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(6, 182, 212, 0.45);
+    }
+
+    /* Стекломорфизм карточек */
+    .glass {
+      background: rgba(15, 23, 42, 0.58);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+    }
+
+    /* Плавные переходы слайдов */
+    .slide {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transform: translateY(14px) scale(0.99);
+      pointer-events: none;
+      transition: opacity 0.42s cubic-bezier(0.16, 1, 0.3, 1), transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .slide.active {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+      z-index: 10;
+    }
+
+    /* Анимация бегущего пунктира для SVG-потоков данных */
+    @keyframes dashFlow {
+      to {
+        stroke-dashoffset: -24;
+      }
+    }
+    .animate-flow {
+      stroke-dasharray: 6 6;
+      animation: dashFlow 1.2s linear infinite;
+    }
+
+    /* Мягкое свечение для узлов */
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 1; }
+    }
+    .animate-glow {
+      animation: pulseGlow 2.4s ease-in-out infinite;
+    }
+
+    /* Стилизация ползунка нагрузки */
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255, 255, 255, 0.1);
+      height: 8px;
+      border-radius: 9999px;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #06b6d4;
+      border: 3px solid #060913;
+      box-shadow: 0 0 14px rgba(6, 182, 212, 0.7);
+      cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #06b6d4;
+      border: 3px solid #060913;
+      box-shadow: 0 0 14px rgba(6, 182, 212, 0.7);
+      cursor: pointer;
+    }
+
+    /* Фоновая инженерная сетка */
+    .bg-grid {
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+  </style>
+</head>
+<body class="bg-void text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
+
+  <!-- Фоновые декоративные градиенты -->
+  <div class="fixed inset-0 pointer-events-none overflow-hidden z-0 bg-grid">
+    <div class="absolute -top-40 -left-32 w-[480px] h-[480px] rounded-full bg-cyan-500/10 blur-[120px]"></div>
+    <div class="absolute -bottom-40 -right-32 w-[520px] h-[520px] rounded-full bg-indigo-600/12 blur-[130px]"></div>
+  </div>
+
+  <!-- ================= ФИКСИРОВАННАЯ ВЕРХНЯЯ ПАНЕЛЬ ================= -->
+  <header class="fixed top-0 left-0 right-0 z-40 px-4 sm:px-8 py-3 bg-[#060913]/80 backdrop-blur-md border-b border-white/[0.08]">
+    <div class="max-w-7xl mx-auto flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 shrink-0">
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path>
+            <path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"></path>
+          </svg>
+        </div>
+        <div class="truncate">
+          <p class="text-xs sm:text-sm font-bold tracking-tight text-white truncate">Облачные базы данных</p>
+          <p class="text-[11px] text-slate-400 hidden sm:block truncate">Архитектура · Масштабирование · Отказоустойчивость · Аналитика</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3 sm:gap-4 shrink-0">
+        <span id="slideCounter" class="font-mono text-xs sm:text-sm font-semibold text-cyan-300 bg-cyan-500/10 border border-cyan-500/25 px-3 py-1 rounded-full">
+          01 / 11
+        </span>
+        <button
+          id="openOverviewBtn"
+          type="button"
+          class="flex items-center gap-2 text-xs sm:text-sm font-medium px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] transition text-slate-200 cursor-pointer"
+          title="Открыть обзор всех слайдов"
+        >
+          <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+          </svg>
+          <span class="hidden sm:inline">Обзор слайдов</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Индикатор прогресса -->
+    <div class="absolute bottom-0 left-0 right-0 h-[2px] bg-white/[0.06]">
+      <div id="progressBar" class="h-full bg-gradient-to-r from-cyan-400 via-indigo-500 to-emerald-400 transition-all duration-300" style="width: 9.09%;"></div>
+    </div>
+  </header>
+
+  <!-- ================= КОНТЕЙНЕР СЛАЙДОВ ================= -->
+  <main id="deck" class="relative w-screen h-screen z-10 overflow-hidden">
+
+    <!-- ==================== СЛАЙД 1: ТИТУЛЬНЫЙ (HERO) ==================== -->
+    <section class="slide active" data-title="Облачные базы данных">
+      <!-- Полноэкранное фоновое фото дата-центра с резервным градиентом -->
+      <div class="absolute inset-0 z-0 overflow-hidden bg-gradient-to-br from-[#071126] via-[#060913] to-[#11102e]">
+        <img
+          src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=1920&q=80"
+          alt="Современный облачный дата-центр"
+          class="w-full h-full object-cover opacity-35 scale-105"
+          onerror="this.style.display='none';"
+        />
+        <div class="absolute inset-0 bg-gradient-to-t from-[#060913] via-[#060913]/75 to-[#060913]/60"></div>
+        <div class="absolute inset-0 bg-gradient-to-r from-[#060913]/90 via-transparent to-[#060913]/80"></div>
+      </div>
+
+      <div class="relative z-10 w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-24 pb-28 flex items-center justify-center">
+        <div class="max-w-5xl w-full text-center flex flex-col items-center">
+          <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-400/30 text-cyan-300 font-mono text-xs tracking-wider uppercase mb-6">
+            <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            ГЛУБОКИЙ РАЗБОР · CLOUD DATA ARCHITECTURE
+          </div>
+
+          <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white leading-[1.08] mb-5">
+            Облачные <span class="bg-gradient-to-r from-cyan-400 via-indigo-400 to-emerald-400 bg-clip-text text-transparent">базы данных</span>
+          </h1>
+
+          <p class="text-base sm:text-xl text-slate-300 max-w-3xl leading-relaxed mb-8">
+            DBaaS · Масштабирование · Отказоустойчивость · Аналитика (OLTP &amp; OLAP)
+          </p>
+
+          <!-- Пиллы маршрута презентации -->
+          <div class="flex flex-wrap justify-center gap-2.5 sm:gap-3 mb-10 max-w-3xl">
+            <span class="glass px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium text-cyan-200 flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-cyan-400"></span> PostgreSQL &amp; REST
+            </span>
+            <span class="glass px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium text-indigo-200 flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-indigo-400"></span> Scale Up vs Scale Out
+            </span>
+            <span class="glass px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium text-emerald-200 flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Failover &amp; PITR
+            </span>
+            <span class="glass px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium text-amber-200 flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-amber-400"></span> Lake vs Warehouse
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onclick="goToSlide(1)"
+            class="group inline-flex items-center gap-3 px-7 py-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-base shadow-xl shadow-cyan-500/25 transition transform hover:-translate-y-0.5 cursor-pointer"
+          >
+            Начать презентацию
+            <span class="transition-transform group-hover:translate-x-1">→</span>
+          </button>
+
+          <p class="mt-8 text-xs text-slate-400 font-mono">
+            Интерактивная дека · 11 слайдов · Управление клавишами ← → или Space
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 2: КАКОЕ ХРАНИЛИЩЕ ВЫБРАТЬ ==================== -->
+    <section class="slide" data-title="Типы облачных хранилищ">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-6">
+            <span class="font-mono text-xs uppercase tracking-widest text-cyan-400">02 · Корень темы</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">Какое облачное хранилище выбрать?</h2>
+            <p class="text-slate-300 text-sm sm:text-base mt-2 max-w-3xl">
+              Облако — это не «один большой диск». Разные паттерны чтения и записи требуют специализированных движков хранения.
+            </p>
+          </div>
+
+          <!-- 3 карточки типов хранилищ -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 mb-6">
+            <!-- 01 Объектное хранилище -->
+            <div class="glass rounded-2xl p-5 flex flex-col justify-between border-t-2 border-t-cyan-400/70">
+              <div>
+                <div class="flex items-center justify-between mb-3">
+                  <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-300">01 · OBJECT STORAGE</span>
+                  <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                  </svg>
+                </div>
+                <h3 class="text-lg font-bold text-white mb-1.5">Объектное хранилище</h3>
+                <p class="text-xs text-cyan-300/90 font-mono mb-3">AWS S3 · Google Cloud Storage · Cloudflare R2</p>
+                <p class="text-sm text-slate-300 leading-relaxed">
+                  Хранит неизменяемые файлы: фото, видео, PDF, бэкапы. Масштабируется практически бесконечно и отдельно от БД.
+                </p>
+              </div>
+              <div class="mt-4 pt-3 border-t border-white/[0.08] text-xs">
+                <span class="text-slate-400">E-commerce пример:</span>
+                <p class="font-mono text-cyan-200 mt-1">Фото товара (2.4 МБ) → ссылка в CDN</p>
+              </div>
+            </div>
+
+            <!-- 02 Операционная БД (OLTP) -->
+            <div class="glass rounded-2xl p-5 flex flex-col justify-between border-t-2 border-t-indigo-400/70">
+              <div>
+                <div class="flex items-center justify-between mb-3">
+                  <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-300">02 · OLTP DATABASE</span>
+                  <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                    <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path>
+                    <path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"></path>
+                  </svg>
+                </div>
+                <h3 class="text-lg font-bold text-white mb-1.5">Операционная БД (OLTP)</h3>
+                <p class="text-xs text-indigo-300/90 font-mono mb-3">PostgreSQL · MySQL · CockroachDB</p>
+                <p class="text-sm text-slate-300 leading-relaxed">
+                  Таблицы и связи, строгие ACID-транзакции, B-Tree индексы, тысячи частых точечных чтений и записей в секунду.
+                </p>
+              </div>
+              <div class="mt-4 pt-3 border-t border-white/[0.08] text-xs">
+                <span class="text-slate-400">E-commerce пример:</span>
+                <p class="font-mono text-indigo-200 mt-1">Заказ ORD-1042, списание баланса</p>
+              </div>
+            </div>
+
+            <!-- 03 Аналитическое хранилище (OLAP) -->
+            <div class="glass rounded-2xl p-5 flex flex-col justify-between border-t-2 border-t-emerald-400/70">
+              <div>
+                <div class="flex items-center justify-between mb-3">
+                  <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300">03 · OLAP WAREHOUSE</span>
+                  <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                  </svg>
+                </div>
+                <h3 class="text-lg font-bold text-white mb-1.5">Аналитическое хранилище</h3>
+                <p class="text-xs text-emerald-300/90 font-mono mb-3">BigQuery · ClickHouse · Snowflake</p>
+                <p class="text-sm text-slate-300 leading-relaxed">
+                  Колоночное хранение, высокое сжатие и массово-параллельные агрегации по миллионам и миллиардам строк.
+                </p>
+              </div>
+              <div class="mt-4 pt-3 border-t border-white/[0.08] text-xs">
+                <span class="text-slate-400">E-commerce пример:</span>
+                <p class="font-mono text-emerald-200 mt-1">Отчёт продаж за год по регионам</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Интерактивный мини-переключатель OLTP vs OLAP -->
+          <div class="glass rounded-2xl p-4 sm:p-5">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <div class="flex items-center gap-2.5">
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                <span class="text-sm font-bold text-white">Интерактивное сравнение: OLTP vs OLAP</span>
+              </div>
+              <div class="inline-flex rounded-xl bg-white/[0.05] p-1 border border-white/[0.08] self-start sm:self-auto">
+                <button type="button" id="btnOltp" onclick="setWorkloadMode('oltp')" class="px-4 py-1.5 rounded-lg text-xs font-bold transition bg-indigo-500 text-white cursor-pointer">
+                  OLTP (Операции)
+                </button>
+                <button type="button" id="btnOlap" onclick="setWorkloadMode('olap')" class="px-4 py-1.5 rounded-lg text-xs font-bold transition text-slate-300 hover:text-white cursor-pointer">
+                  OLAP (Аналитика)
+                </button>
+              </div>
+            </div>
+
+            <div id="workloadComparison" class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs sm:text-sm">
+              <!-- Заполняется скриптом -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 3: DBaaS И РАЗДЕЛЕНИЕ ОТВЕТСТВЕННОСТИ ==================== -->
+    <section class="slide" data-title="DBaaS и разделение ответственности">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+            <div>
+              <span class="font-mono text-xs uppercase tracking-widest text-indigo-400">03 · Управляемые сервисы</span>
+              <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">DBaaS и модель разделения ответственности</h2>
+              <p class="text-slate-300 text-sm sm:text-base mt-2 max-w-2xl">
+                <strong class="text-white">Database as a Service</strong> (Supabase, AWS RDS, Neon, Google Cloud SQL) снимает рутину администрирования серверов, но не снимает ответственность за данные.
+              </p>
+            </div>
+
+            <!-- Переключатель Self-Hosted vs Managed DBaaS -->
+            <div class="inline-flex rounded-xl bg-white/[0.06] p-1 border border-white/[0.1] shrink-0 self-start">
+              <button type="button" id="tabSelfHosted" onclick="setDbaasMode('self')" class="px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition text-slate-300 hover:text-white cursor-pointer">
+                Self-Hosted (Свой сервер)
+              </button>
+              <button type="button" id="tabDbaas" onclick="setDbaasMode('dbaas')" class="px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition bg-cyan-500 text-slate-950 cursor-pointer">
+                Managed DBaaS
+              </button>
+            </div>
+          </div>
+
+          <!-- Матрица слоёв ответственности -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div class="lg:col-span-7 glass rounded-2xl p-5">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider">Слои ответственности</h3>
+                <div class="flex items-center gap-3 text-xs">
+                  <span class="flex items-center gap-1.5 text-cyan-300"><span class="w-2.5 h-2.5 rounded-sm bg-cyan-500"></span> Разработчик</span>
+                  <span class="flex items-center gap-1.5 text-indigo-300"><span class="w-2.5 h-2.5 rounded-sm bg-indigo-500"></span> Облачный провайдер</span>
+                </div>
+              </div>
+
+              <div id="responsibilityStack" class="space-y-2.5">
+                <!-- Заполняется JS -->
+              </div>
+            </div>
+
+            <!-- Правая колонка: плюсы/минусы и инсайт -->
+            <div class="lg:col-span-5 space-y-4">
+              <div class="glass rounded-2xl p-5 border-l-4 border-l-emerald-400">
+                <h4 class="text-sm font-bold text-emerald-300 mb-2 flex items-center gap-2">
+                  <span>✓</span> Почему выбирают DBaaS
+                </h4>
+                <ul class="text-xs sm:text-sm text-slate-300 space-y-1.5 list-disc list-inside">
+                  <li>Запуск production-кластера PostgreSQL за 2 минуты.</li>
+                  <li>Автоматические патчи безопасности и point-in-time бэкапы.</li>
+                  <li>Встроенный мониторинг, метрики и авто-failover.</li>
+                </ul>
+              </div>
+
+              <div class="glass rounded-2xl p-5 border-l-4 border-l-amber-400">
+                <h4 class="text-sm font-bold text-amber-300 mb-2 flex items-center gap-2">
+                  <span>!</span> Компромиссы и риски
+                </h4>
+                <ul class="text-xs sm:text-sm text-slate-300 space-y-1.5 list-disc list-inside">
+                  <li><strong class="text-white">Стоимость на больших объёмах:</strong> при росте трафика и IOPS чек выше, чем на своём железе.</li>
+                  <li><strong class="text-white">Vendor Lock-in:</strong> привязка к проприетарным фичам провайдера (если не использовать стандартный SQL).</li>
+                  <li><strong class="text-white">Плохой индекс</strong> «уронит» даже самый дорогой DBaaS.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 4: АРХИТЕКТУРА WEB + POSTGRESQL И БЕЗОПАСНОСТЬ ==================== -->
+    <section class="slide" data-title="Web + PostgreSQL и безопасность ключей">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-5">
+            <span class="font-mono text-xs uppercase tracking-widest text-cyan-400">04 · Архитектура и безопасность</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">Web-приложение + PostgreSQL и защита ключей</h2>
+          </div>
+
+          <!-- Анимированная SVG-схема потока запроса -->
+          <div class="glass rounded-2xl p-4 sm:p-6 mb-5 overflow-x-auto">
+            <p class="text-xs font-mono text-slate-400 mb-3 uppercase tracking-wider">Путь HTTP-запроса в управляемую БД (например, Supabase)</p>
+            <svg viewBox="0 0 960 135" class="w-full min-w-[680px] h-auto">
+              <defs>
+                <linearGradient id="nodeCyan" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.25" />
+                  <stop offset="100%" stop-color="#0e7490" stop-opacity="0.1" />
+                </linearGradient>
+                <linearGradient id="nodeIndigo" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#6366f1" stop-opacity="0.28" />
+                  <stop offset="100%" stop-color="#4338ca" stop-opacity="0.1" />
+                </linearGradient>
+                <linearGradient id="nodeAmber" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.25" />
+                  <stop offset="100%" stop-color="#b45309" stop-opacity="0.1" />
+                </linearGradient>
+                <linearGradient id="nodeEmerald" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#10b981" stop-opacity="0.28" />
+                  <stop offset="100%" stop-color="#047857" stop-opacity="0.1" />
+                </linearGradient>
+              </defs>
+
+              <!-- Узел 1: Frontend -->
+              <rect x="10" y="22" width="185" height="90" rx="14" fill="url(#nodeCyan)" stroke="#22d3ee" stroke-width="1.5" />
+              <text x="102" y="54" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">Веб-приложение</text>
+              <text x="102" y="75" text-anchor="middle" fill="#67e8f9" font-size="11" font-family="JetBrains Mono">Frontend (Браузер)</text>
+              <text x="102" y="96" text-anchor="middle" fill="#94a3b8" font-size="10">anon key + JWT юзера</text>
+
+              <!-- Стрелка 1 -->
+              <line x1="195" y1="67" x2="262" y2="67" stroke="#22d3ee" stroke-width="2.5" class="animate-flow" />
+              <polygon points="262,61 274,67 262,73" fill="#22d3ee" />
+              <text x="234" y="54" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="JetBrains Mono">HTTPS</text>
+
+              <!-- Узел 2: API / PostgREST -->
+              <rect x="275" y="22" width="185" height="90" rx="14" fill="url(#nodeIndigo)" stroke="#818cf8" stroke-width="1.5" />
+              <text x="367" y="54" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">API / PostgREST</text>
+              <text x="367" y="75" text-anchor="middle" fill="#a5b4fc" font-size="11" font-family="JetBrains Mono">REST / GraphQL</text>
+              <text x="367" y="96" text-anchor="middle" fill="#94a3b8" font-size="10">Валидация и парсинг</text>
+
+              <!-- Стрелка 2 -->
+              <line x1="460" y1="67" x2="527" y2="67" stroke="#818cf8" stroke-width="2.5" class="animate-flow" />
+              <polygon points="527,61 539,67 527,73" fill="#818cf8" />
+              <text x="499" y="54" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="JetBrains Mono">JWT</text>
+
+              <!-- Узел 3: RLS Check -->
+              <rect x="540" y="22" width="165" height="90" rx="14" fill="url(#nodeAmber)" stroke="#fbbf24" stroke-width="1.5" />
+              <text x="622" y="54" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">RLS Check</text>
+              <text x="622" y="75" text-anchor="middle" fill="#fcd34d" font-size="11" font-family="JetBrains Mono">Row Level Security</text>
+              <text x="622" y="96" text-anchor="middle" fill="#94a3b8" font-size="10">Фильтр прав на строки</text>
+
+              <!-- Стрелка 3 -->
+              <line x1="705" y1="67" x2="762" y2="67" stroke="#10b981" stroke-width="2.5" class="animate-flow" />
+              <polygon points="762,61 774,67 762,73" fill="#10b981" />
+              <text x="739" y="54" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="JetBrains Mono">SQL</text>
+
+              <!-- Узел 4: PostgreSQL -->
+              <rect x="775" y="22" width="175" height="90" rx="14" fill="url(#nodeEmerald)" stroke="#34d399" stroke-width="1.5" />
+              <text x="862" y="54" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">PostgreSQL</text>
+              <text x="862" y="75" text-anchor="middle" fill="#6ee7b7" font-size="11" font-family="JetBrains Mono">public.demo_orders</text>
+              <text x="862" y="96" text-anchor="middle" fill="#94a3b8" font-size="10">ACID · Индексы · WAL</text>
+            </svg>
+          </div>
+
+          <!-- Нижние 2 карточки: предупреждение о ключах и реальный SQL код RLS -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <!-- Критическое правило безопасности -->
+            <div class="rounded-2xl p-5 bg-gradient-to-br from-rose-500/15 via-rose-950/20 to-amber-500/10 border border-rose-500/35">
+              <div class="flex items-center gap-2.5 mb-3">
+                <span class="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 font-mono text-xs font-bold">КРИТИЧЕСКАЯ БЕЗОПАСНОСТЬ</span>
+              </div>
+              <h3 class="text-lg font-bold text-white mb-2">
+                Почему нельзя класть <code class="font-mono text-rose-300 text-base">service_role</code> ключ во фронтенд?
+              </h3>
+              <p class="text-sm text-slate-300 leading-relaxed mb-3">
+                Любой код в браузере (JS-бандл, вкладка Network в DevTools) полностью открыт пользователю.
+                Ключ <code class="font-mono text-rose-300">service_role</code> / <code class="font-mono text-amber-300">secret</code> обладает правами суперпользователя и <strong class="text-white">полностью обходит политики RLS</strong>.
+              </p>
+              <div class="grid grid-cols-2 gap-3 text-xs">
+                <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
+                  <p class="font-mono font-bold text-emerald-300 mb-1">✓ В браузере (Frontend)</p>
+                  <p class="text-slate-300">Только публичный <code class="font-mono">anon</code> ключ + строгие RLS-правила в PostgreSQL.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25">
+                  <p class="font-mono font-bold text-rose-300 mb-1">✕ Только на сервере (Backend)</p>
+                  <p class="text-slate-300"><code class="font-mono">service_role</code> в переменных окружения (.env), скрытых от клиента.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Пример реальной RLS-политики -->
+            <div class="glass rounded-2xl p-5 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between mb-3">
+                  <span class="font-mono text-xs text-cyan-300 font-semibold">PostgreSQL · Row Level Security (RLS)</span>
+                  <span class="text-[11px] font-mono text-slate-400">schema.sql</span>
+                </div>
+                <pre class="font-mono text-xs sm:text-[13px] leading-relaxed bg-[#04070f] border border-white/[0.08] rounded-xl p-4 overflow-x-auto text-slate-200"><code><span class="text-slate-500">-- 1. Включаем защиту на уровне строк</span>
+<span class="text-indigo-400">ALTER TABLE</span> public.demo_orders
+  <span class="text-indigo-400">ENABLE ROW LEVEL SECURITY</span>;
+
+<span class="text-slate-500">-- 2. Пользователь видит ТОЛЬКО свои заказы</span>
+<span class="text-indigo-400">CREATE POLICY</span> <span class="text-emerald-300">"Users see own orders"</span>
+  <span class="text-indigo-400">ON</span> public.demo_orders
+  <span class="text-indigo-400">FOR SELECT</span>
+  <span class="text-indigo-400">USING</span> ( auth.<span class="text-cyan-300">uid</span>() = user_id );</code></pre>
+              </div>
+              <p class="text-xs text-slate-400 mt-3">
+                Даже если злоумышленник изменит REST-запрос в браузере, движок PostgreSQL автоматически добавит условие <code class="font-mono text-cyan-300">WHERE auth.uid() = user_id</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 5: ИНТЕРАКТИВНЫЙ CRUD & REST API СИМУЛЯТОР ==================== -->
+    <section class="slide" data-title="Практика: Live CRUD & SQL Симулятор">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div>
+              <span class="font-mono text-xs uppercase tracking-widest text-emerald-400">05 · Интерактивная практика</span>
+              <h2 class="text-2xl sm:text-3xl font-extrabold text-white mt-0.5">Live CRUD &amp; REST API Симулятор</h2>
+            </div>
+            <button
+              type="button"
+              onclick="resetCrudDemo()"
+              class="self-start sm:self-auto px-3.5 py-1.5 rounded-lg text-xs font-mono font-semibold bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-slate-300 transition cursor-pointer"
+            >
+              ↺ Сбросить демо-данные
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <!-- Левая панель: форма создания заказа -->
+            <div class="lg:col-span-4 glass rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
+              <div>
+                <h3 class="text-sm font-bold text-white mb-1">Новый заказ → <span class="font-mono text-emerald-400">POST</span></h3>
+                <p class="text-xs text-slate-400 mb-4">Имитация запроса в <code class="font-mono text-cyan-300">public.demo_orders</code></p>
+
+                <form id="crudForm" onsubmit="handleCreateOrder(event)" class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-slate-300 mb-1">Клиент</label>
+                    <input
+                      id="inputCustomer"
+                      type="text"
+                      required
+                      placeholder="Например, Алина К."
+                      class="w-full px-3 py-2 rounded-xl bg-[#04070f] border border-white/[0.12] text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs text-slate-300 mb-1">Товар</label>
+                    <input
+                      id="inputItem"
+                      type="text"
+                      required
+                      placeholder="Например, SSD NVMe 2TB"
+                      class="w-full px-3 py-2 rounded-xl bg-[#04070f] border border-white/[0.12] text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs text-slate-300 mb-1">Сумма (₸)</label>
+                    <input
+                      id="inputAmount"
+                      type="number"
+                      min="500"
+                      step="500"
+                      required
+                      value="45000"
+                      class="w-full px-3 py-2 rounded-xl bg-[#04070f] border border-white/[0.12] text-sm font-mono text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-bold text-sm transition cursor-pointer shadow-lg shadow-emerald-500/20"
+                  >
+                    + Отправить POST запрос
+                  </button>
+                </form>
+              </div>
+
+              <div class="mt-4 pt-3 border-t border-white/[0.08] text-[11px] text-slate-400">
+                Нажимайте на статус заказа в таблице, чтобы отправить <code class="font-mono text-amber-300">PATCH</code>, или на корзину для <code class="font-mono text-rose-300">DELETE</code>.
+              </div>
+            </div>
+
+            <!-- Правая панель: таблица + инспектор сети и SQL -->
+            <div class="lg:col-span-8 flex flex-col gap-4">
+              <!-- Живая таблица -->
+              <div class="glass rounded-2xl p-4 overflow-x-auto">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="font-mono text-xs font-bold text-cyan-300">TABLE: public.demo_orders</span>
+                  <span id="orderCountBadge" class="font-mono text-xs text-slate-400">3 записи</span>
+                </div>
+                <table class="w-full text-left border-collapse min-w-[480px]">
+                  <thead>
+                    <tr class="border-b border-white/[0.08] text-[11px] font-mono text-slate-400 uppercase">
+                      <th class="py-2 pr-3">ID</th>
+                      <th class="py-2 pr-3">Клиент</th>
+                      <th class="py-2 pr-3">Товар</th>
+                      <th class="py-2 pr-3">Сумма</th>
+                      <th class="py-2 pr-3">Статус (PATCH)</th>
+                      <th class="py-2 text-right">Удалить</th>
+                    </tr>
+                  </thead>
+                  <tbody id="crudTableBody" class="text-xs sm:text-sm divide-y divide-white/[0.05]">
+                    <!-- Заполняется JS -->
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Network & SQL Inspector -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="rounded-2xl bg-[#04070f] border border-cyan-500/25 p-3.5">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-mono text-[11px] font-bold text-cyan-400 uppercase">HTTP / REST Запрос</span>
+                    <span id="httpStatusPill" class="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300">200 OK</span>
+                  </div>
+                  <pre id="httpInspector" class="font-mono text-[11px] leading-relaxed text-slate-300 overflow-x-auto whitespace-pre-wrap"></pre>
+                </div>
+
+                <div class="rounded-2xl bg-[#04070f] border border-indigo-500/25 p-3.5">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-mono text-[11px] font-bold text-indigo-400 uppercase">Выполненный PostgreSQL</span>
+                    <span class="font-mono text-[10px] text-slate-500">PostgREST → PG</span>
+                  </div>
+                  <pre id="sqlInspector" class="font-mono text-[11px] leading-relaxed text-emerald-200 overflow-x-auto whitespace-pre-wrap"></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 6: МАСШТАБИРОВАНИЕ + СИМУЛЯТОР НАГРУЗКИ ==================== -->
+    <section class="slide" data-title="Масштабирование и симулятор нагрузки">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-5">
+            <span class="font-mono text-xs uppercase tracking-widest text-cyan-400">06 · Рост нагрузки</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">Масштабирование: Vertical vs Horizontal</h2>
+          </div>
+
+          <!-- Краткое сравнение Scale Up vs Scale Out -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+            <div class="glass rounded-2xl p-4 border-l-4 border-l-amber-400">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="text-base font-bold text-white">Вертикальное (Scale Up)</h3>
+                <span class="font-mono text-xs text-amber-300">↑ CPU / RAM / NVMe</span>
+              </div>
+              <p class="text-xs sm:text-sm text-slate-300">
+                Усиливаем один сервер. <strong class="text-white">Плюс:</strong> не нужно менять код приложения. <strong class="text-white">Минус:</strong> есть физический потолок железа и короткий простой при апгрейде.
+              </p>
+            </div>
+            <div class="glass rounded-2xl p-4 border-l-4 border-l-cyan-400">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="text-base font-bold text-white">Горизонтальное (Scale Out)</h3>
+                <span class="font-mono text-xs text-cyan-300">→ Read Replicas · Sharding</span>
+              </div>
+              <p class="text-xs sm:text-sm text-slate-300">
+                Добавляем узлы: <strong class="text-white">Read Replicas</strong> забирают чтение, <strong class="text-white">PgBouncer</strong> управляет коннектами, а <strong class="text-white">Шардирование</strong> делит запись между серверами.
+              </p>
+            </div>
+          </div>
+
+          <!-- Интерактивный симулятор нагрузки -->
+          <div class="glass rounded-2xl p-5">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <div>
+                <h3 class="text-base font-bold text-white">Интерактивный симулятор нагрузки</h3>
+                <p class="text-xs text-slate-400">Подвигайте ползунок RPS и включайте архитектурные улучшения</p>
+              </div>
+              <div id="simStatusBadge" class="font-mono text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 self-start">
+                ● HEALTHY · Система стабильна
+              </div>
+            </div>
+
+            <!-- Ползунок RPS -->
+            <div class="mb-5">
+              <div class="flex items-center justify-between text-xs sm:text-sm mb-2">
+                <span class="text-slate-300 font-medium">Входящий трафик (80% чтение / 20% запись)</span>
+                <span id="rpsDisplay" class="font-mono text-lg font-extrabold text-cyan-300">2 500 RPS</span>
+              </div>
+              <input id="rpsSlider" type="range" min="100" max="50000" step="100" value="2500" oninput="updateLoadSimulator()" class="w-full" />
+              <div class="flex justify-between text-[11px] font-mono text-slate-500 mt-1">
+                <span>100 RPS</span>
+                <span>10 000 RPS</span>
+                <span>25 000 RPS</span>
+                <span>50 000 RPS</span>
+              </div>
+            </div>
+
+            <!-- Тумблеры улучшений -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+              <label class="flex items-center gap-3 p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] cursor-pointer hover:bg-white/[0.07] transition">
+                <input id="chkPooler" type="checkbox" onchange="updateLoadSimulator()" class="w-4 h-4 accent-cyan-400 rounded" />
+                <div>
+                  <p class="text-xs sm:text-sm font-bold text-white">Connection Pooler</p>
+                  <p class="text-[11px] text-slate-400">PgBouncer снимает оверхед коннектов</p>
+                </div>
+              </label>
+              <label class="flex items-center gap-3 p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] cursor-pointer hover:bg-white/[0.07] transition">
+                <input id="chkReplicas" type="checkbox" onchange="updateLoadSimulator()" class="w-4 h-4 accent-indigo-400 rounded" />
+                <div>
+                  <p class="text-xs sm:text-sm font-bold text-white">Read Replicas (x3)</p>
+                  <p class="text-[11px] text-slate-400">Разгружает SELECT с Primary</p>
+                </div>
+              </label>
+              <label class="flex items-center gap-3 p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] cursor-pointer hover:bg-white/[0.07] transition">
+                <input id="chkSharding" type="checkbox" onchange="updateLoadSimulator()" class="w-4 h-4 accent-emerald-400 rounded" />
+                <div>
+                  <p class="text-xs sm:text-sm font-bold text-white">Шардирование (x4)</p>
+                  <p class="text-[11px] text-slate-400">Делит запись и хранение по ключам</p>
+                </div>
+              </label>
+            </div>
+
+            <!-- Живые метрики -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+              <div class="p-3.5 rounded-xl bg-[#04070f] border border-white/[0.08]">
+                <div class="flex justify-between text-xs mb-1.5">
+                  <span class="text-slate-400">Загрузка CPU Primary</span>
+                  <span id="cpuVal" class="font-mono font-bold text-emerald-300">24%</span>
+                </div>
+                <div class="w-full h-2.5 rounded-full bg-white/[0.08] overflow-hidden">
+                  <div id="cpuBar" class="h-full bg-emerald-400 transition-all duration-300" style="width: 24%"></div>
+                </div>
+              </div>
+
+              <div class="p-3.5 rounded-xl bg-[#04070f] border border-white/[0.08]">
+                <div class="flex justify-between text-xs mb-1.5">
+                  <span class="text-slate-400">Задержка чтения (p95)</span>
+                  <span id="latencyVal" class="font-mono font-bold text-cyan-300">12 мс</span>
+                </div>
+                <div class="w-full h-2.5 rounded-full bg-white/[0.08] overflow-hidden">
+                  <div id="latencyBar" class="h-full bg-cyan-400 transition-all duration-300" style="width: 15%"></div>
+                </div>
+              </div>
+
+              <div class="p-3.5 rounded-xl bg-[#04070f] border border-white/[0.08]">
+                <p class="text-[11px] font-mono text-slate-400 uppercase mb-1">Вердикт архитектора</p>
+                <p id="simFeedback" class="text-xs text-slate-200 leading-snug"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 7: ДОСТУПНОСТЬ, FAILOVER И РЕПЛИКА != БЭКАП ==================== -->
+    <section class="slide" data-title="Доступность, Failover и PITR">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-5">
+            <span class="font-mono text-xs uppercase tracking-widest text-rose-400">07 · Отказоустойчивость</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">Failover и главный миф: «Реплика ≠ Бэкап»</h2>
+          </div>
+
+          <!-- Панель кнопок симулятора аварий -->
+          <div class="flex flex-wrap gap-2.5 mb-5">
+            <button type="button" onclick="simulateHA('normal')" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-white/[0.07] hover:bg-white/[0.13] border border-white/[0.12] text-slate-200 transition cursor-pointer">
+              ✓ Штатный режим
+            </button>
+            <button type="button" onclick="simulateHA('outage')" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 transition cursor-pointer">
+              ⚡ Отказ дата-центра Zone A
+            </button>
+            <button type="button" onclick="simulateHA('delete')" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-200 transition cursor-pointer">
+              💀 Случайный DELETE FROM orders;
+            </button>
+            <button type="button" onclick="simulateHA('pitr')" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-200 transition cursor-pointer">
+              ⏪ Восстановить через PITR (Backup)
+            </button>
+          </div>
+
+          <!-- Интерактивная топология из 3 узлов -->
+          <div class="glass rounded-2xl p-5 mb-5">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+              <!-- Узел A: Primary -->
+              <div id="haNodeA" class="rounded-2xl p-4 border-2 border-emerald-500/50 bg-emerald-500/10 transition-all duration-300 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-mono text-xs font-bold text-emerald-300">ZONE A</span>
+                    <span id="haStatusA" class="font-mono text-[11px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-200">PRIMARY · ONLINE</span>
+                  </div>
+                  <h3 class="text-lg font-bold text-white">Основная БД</h3>
+                  <p class="text-xs text-slate-300 mt-1">Принимает трафик записи и чтения</p>
+                </div>
+                <div class="mt-4 pt-3 border-t border-white/[0.1] flex justify-between items-center font-mono text-xs">
+                  <span class="text-slate-400">Строк в orders:</span>
+                  <span id="haRowsA" class="font-bold text-white text-sm">124 850</span>
+                </div>
+              </div>
+
+              <!-- Узел B: Standby Replica -->
+              <div id="haNodeB" class="rounded-2xl p-4 border-2 border-cyan-500/40 bg-cyan-500/10 transition-all duration-300 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-mono text-xs font-bold text-cyan-300">ZONE B</span>
+                    <span id="haStatusB" class="font-mono text-[11px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-200">STANDBY REPLICA</span>
+                  </div>
+                  <h3 class="text-lg font-bold text-white">Горячая реплика</h3>
+                  <p class="text-xs text-slate-300 mt-1">Мгновенно копирует WAL-журнал из Zone A</p>
+                </div>
+                <div class="mt-4 pt-3 border-t border-white/[0.1] flex justify-between items-center font-mono text-xs">
+                  <span class="text-slate-400">Строк в orders:</span>
+                  <span id="haRowsB" class="font-bold text-white text-sm">124 850</span>
+                </div>
+              </div>
+
+              <!-- Узел C: Backup / PITR -->
+              <div id="haNodeC" class="rounded-2xl p-4 border-2 border-indigo-500/40 bg-indigo-500/10 transition-all duration-300 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-mono text-xs font-bold text-indigo-300">OBJECT STORAGE (S3)</span>
+                    <span id="haStatusC" class="font-mono text-[11px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200">PITR ARCHIVE</span>
+                  </div>
+                  <h3 class="text-lg font-bold text-white">Резервные копии</h3>
+                  <p class="text-xs text-slate-300 mt-1">Снапшоты + архив WAL за 30 дней</p>
+                </div>
+                <div class="mt-4 pt-3 border-t border-white/[0.1] flex justify-between items-center font-mono text-xs">
+                  <span class="text-slate-400">Точка отката:</span>
+                  <span id="haRowsC" class="font-bold text-emerald-300 text-sm">124 850 (T-1 мин)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Лог события -->
+            <div id="haExplanation" class="mt-4 p-4 rounded-xl bg-[#04070f] border border-white/[0.08] text-xs sm:text-sm text-slate-200 leading-relaxed">
+              <!-- Заполняется JS -->
+            </div>
+          </div>
+
+          <!-- RTO / RPO -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="glass rounded-2xl p-4 flex items-start gap-3">
+              <span class="font-mono text-sm font-extrabold text-cyan-300 bg-cyan-500/15 px-2.5 py-1 rounded-lg shrink-0">RTO</span>
+              <p class="text-xs sm:text-sm text-slate-300">
+                <strong class="text-white">Recovery Time Objective</strong> — максимальное допустимое время простоя. Автоматический Failover снижает RTO до 15–30 секунд.
+              </p>
+            </div>
+            <div class="glass rounded-2xl p-4 flex items-start gap-3">
+              <span class="font-mono text-sm font-extrabold text-indigo-300 bg-indigo-500/15 px-2.5 py-1 rounded-lg shrink-0">RPO</span>
+              <p class="text-xs sm:text-sm text-slate-300">
+                <strong class="text-white">Recovery Point Objective</strong> — сколько данных допустимо потерять (во времени). Синхронная репликация даёт RPO = 0.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 8: DATA LAKE, DATA WAREHOUSE И LAKEHOUSE ==================== -->
+    <section class="slide" data-title="Data Lake, Warehouse и колоночное хранение">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-4">
+            <span class="font-mono text-xs uppercase tracking-widest text-emerald-400">08 · Аналитический контур</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">Data Lake, Data Warehouse и Lakehouse</h2>
+          </div>
+
+          <!-- Пайплайн данных -->
+          <div class="glass rounded-2xl p-3.5 mb-4 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+            <div class="px-3 py-2 rounded-xl bg-white/[0.05] border border-white/[0.08] text-slate-200">1. Источники (БД, клики, логи)</div>
+            <span class="text-cyan-400 font-bold">→</span>
+            <div class="px-3 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-200">2. Data Lake (сырые данные)</div>
+            <span class="text-indigo-400 font-bold">→</span>
+            <div class="px-3 py-2 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-200">3. ETL / ELT (очистка, dbt)</div>
+            <span class="text-emerald-400 font-bold">→</span>
+            <div class="px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">4. Data Warehouse (витрины, BI)</div>
+          </div>
+
+          <!-- Сравнение Lake vs Warehouse + Lakehouse -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div class="glass rounded-2xl p-4 border-t-2 border-t-cyan-400">
+              <h3 class="text-base font-bold text-white mb-1">Data Lake</h3>
+              <p class="font-mono text-[11px] text-cyan-300 mb-2">Schema-on-Read · S3 / Parquet / JSON</p>
+              <p class="text-xs text-slate-300 leading-relaxed">
+                Дёшево хранит петабайты сырых логов, событий и медиа. Идеально для Data Science и обучения ML-моделей.
+              </p>
+            </div>
+
+            <div class="glass rounded-2xl p-4 border-t-2 border-t-emerald-400">
+              <h3 class="text-base font-bold text-white mb-1">Data Warehouse</h3>
+              <p class="font-mono text-[11px] text-emerald-300 mb-2">Schema-on-Write · BigQuery / ClickHouse</p>
+              <p class="text-xs text-slate-300 leading-relaxed">
+                Очищенные, строго структурированные витрины. Мгновенные SQL-агрегации для BI-дашбордов и финотчётов.
+              </p>
+            </div>
+
+            <div class="glass rounded-2xl p-4 border-t-2 border-t-indigo-400">
+              <h3 class="text-base font-bold text-white mb-1">Data Lakehouse</h3>
+              <p class="font-mono text-[11px] text-indigo-300 mb-2">Apache Iceberg · Delta Lake</p>
+              <p class="text-xs text-slate-300 leading-relaxed">
+                Современный гибрид: ACID-транзакции и скорость витрин прямо поверх дешёвого объектного хранилища S3.
+              </p>
+            </div>
+          </div>
+
+          <!-- Интерактивный визуализатор Row vs Columnar -->
+          <div class="glass rounded-2xl p-4 sm:p-5">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <div>
+                <h4 class="text-sm font-bold text-white">Почему аналитика быстрее: Строковое (Row) vs Колоночное (Columnar)</h4>
+                <p class="text-xs text-slate-400 font-mono mt-0.5">Запрос: <span class="text-amber-300">SELECT SUM(amount) FROM orders;</span></p>
+              </div>
+              <button
+                type="button"
+                onclick="runStorageScan()"
+                class="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-bold text-xs transition cursor-pointer shrink-0 self-start sm:self-auto"
+              >
+                ▶ Запустить сканирование
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- Row Store -->
+              <div class="p-3.5 rounded-xl bg-[#04070f] border border-white/[0.08]">
+                <div class="flex justify-between items-center mb-2 text-xs">
+                  <span class="font-bold text-amber-300">Row-Store (PostgreSQL / OLTP)</span>
+                  <span id="rowScanMetric" class="font-mono text-slate-400">Готов к тесту</span>
+                </div>
+                <div id="rowGrid" class="grid grid-cols-4 gap-1.5 font-mono text-[11px]">
+                  <!-- Генерируется JS -->
+                </div>
+              </div>
+
+              <!-- Columnar Store -->
+              <div class="p-3.5 rounded-xl bg-[#04070f] border border-white/[0.08]">
+                <div class="flex justify-between items-center mb-2 text-xs">
+                  <span class="font-bold text-emerald-300">Columnar-Store (ClickHouse / OLAP)</span>
+                  <span id="colScanMetric" class="font-mono text-slate-400">Готов к тесту</span>
+                </div>
+                <div id="colGrid" class="grid grid-cols-4 gap-1.5 font-mono text-[11px]">
+                  <!-- Генерируется JS -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 9: РЕАЛЬНЫЕ ПРИМЕРЫ АРХИТЕКТУР (КЕЙСЫ) ==================== -->
+    <section class="slide" data-title="Реальные примеры архитектур">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-6">
+            <span class="font-mono text-xs uppercase tracking-widest text-indigo-400">09 · Индустриальные кейсы</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">Как это работает в реальных проектах</h2>
+            <p class="text-slate-300 text-sm sm:text-base mt-1.5">
+              Крупные системы почти никогда не используют одну базу — они комбинируют сервисы под каждую задачу (Polyglot Persistence).
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <!-- Кейс 1: E-commerce -->
+            <div class="glass rounded-2xl overflow-hidden flex flex-col">
+              <div class="relative h-36 bg-gradient-to-br from-cyan-900 to-indigo-950 overflow-hidden">
+                <img
+                  src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=800&q=75"
+                  alt="E-commerce в Чёрную пятницу"
+                  class="w-full h-full object-cover opacity-55"
+                  onerror="this.style.display='none';"
+                />
+                <div class="absolute inset-0 bg-gradient-to-t from-[#0d1324] via-transparent to-transparent"></div>
+                <span class="absolute top-3 left-3 font-mono text-[11px] font-bold px-2.5 py-1 rounded-lg bg-cyan-500/25 border border-cyan-400/40 text-cyan-200 backdrop-blur-sm">
+                  E-COMMERCE · ПИКИ
+                </span>
+              </div>
+              <div class="p-5 flex-1 flex flex-col justify-between">
+                <div>
+                  <h3 class="text-lg font-bold text-white mb-2">Маркетплейс в «Чёрную пятницу»</h3>
+                  <p class="text-xs sm:text-sm text-slate-300 leading-relaxed mb-4">
+                    При 10-кратном росте трафика каталог и корзина обслуживаются из кэша, заказы пишутся в транзакционную БД, а дашборд продаж обновляется в реальном времени.
+                  </p>
+                </div>
+                <div class="flex flex-wrap gap-1.5 font-mono text-[11px]">
+                  <span class="px-2 py-1 rounded-md bg-indigo-500/15 text-indigo-300 border border-indigo-500/25">PostgreSQL (заказы)</span>
+                  <span class="px-2 py-1 rounded-md bg-rose-500/15 text-rose-300 border border-rose-500/25">Redis (корзина)</span>
+                  <span class="px-2 py-1 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">S3 + CDN (фото)</span>
+                  <span class="px-2 py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">ClickHouse (BI)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Кейс 2: Финтех -->
+            <div class="glass rounded-2xl overflow-hidden flex flex-col">
+              <div class="relative h-36 bg-gradient-to-br from-emerald-900 to-slate-900 overflow-hidden">
+                <img
+                  src="https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=800&q=75"
+                  alt="Финтех и банковские транзакции"
+                  class="w-full h-full object-cover opacity-55"
+                  onerror="this.style.display='none';"
+                />
+                <div class="absolute inset-0 bg-gradient-to-t from-[#0d1324] via-transparent to-transparent"></div>
+                <span class="absolute top-3 left-3 font-mono text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-500/25 border border-emerald-400/40 text-emerald-200 backdrop-blur-sm">
+                  ФИНТЕХ · RPO = 0
+                </span>
+              </div>
+              <div class="p-5 flex-1 flex flex-col justify-between">
+                <div>
+                  <h3 class="text-lg font-bold text-white mb-2">Банкинг и платёжный процессинг</h3>
+                  <p class="text-xs sm:text-sm text-slate-300 leading-relaxed mb-4">
+                    Потеря даже одного перевода недопустима. Используется синхронная Multi-AZ репликация, строгая изоляция транзакций и неизменяемый аудит-лог.
+                  </p>
+                </div>
+                <div class="flex flex-wrap gap-1.5 font-mono text-[11px]">
+                  <span class="px-2 py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">Multi-AZ Sync DB</span>
+                  <span class="px-2 py-1 rounded-md bg-indigo-500/15 text-indigo-300 border border-indigo-500/25">Strict ACID</span>
+                  <span class="px-2 py-1 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/25">WORM Audit S3</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Кейс 3: Стриминг и IoT -->
+            <div class="glass rounded-2xl overflow-hidden flex flex-col">
+              <div class="relative h-36 bg-gradient-to-br from-indigo-900 to-purple-950 overflow-hidden">
+                <img
+                  src="https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=800&q=75"
+                  alt="Стриминг и IoT телеметрия"
+                  class="w-full h-full object-cover opacity-55"
+                  onerror="this.style.display='none';"
+                />
+                <div class="absolute inset-0 bg-gradient-to-t from-[#0d1324] via-transparent to-transparent"></div>
+                <span class="absolute top-3 left-3 font-mono text-[11px] font-bold px-2.5 py-1 rounded-lg bg-indigo-500/25 border border-indigo-400/40 text-indigo-200 backdrop-blur-sm">
+                  IoT · BIG DATA
+                </span>
+              </div>
+              <div class="p-5 flex-1 flex flex-col justify-between">
+                <div>
+                  <h3 class="text-lg font-bold text-white mb-2">Стриминг и телеметрия устройств</h3>
+                  <p class="text-xs sm:text-sm text-slate-300 leading-relaxed mb-4">
+                    Миллионы событий в минуту буферизуются брокером сообщений, складываются в Data Lake для ML, а затем агрегируются в Data Warehouse.
+                  </p>
+                </div>
+                <div class="flex flex-wrap gap-1.5 font-mono text-[11px]">
+                  <span class="px-2 py-1 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/25">Apache Kafka</span>
+                  <span class="px-2 py-1 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">Data Lake (Parquet)</span>
+                  <span class="px-2 py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">BigQuery / Snowflake</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 10: ИНТЕРАКТИВНЫЙ ПОДБОРЩИК АРХИТЕКТУРЫ ==================== -->
+    <section class="slide" data-title="Интерактивный подборщик архитектуры">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-5">
+            <span class="font-mono text-xs uppercase tracking-widest text-amber-400">10 · Матрица решений</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">Выбор зависит от требований</h2>
+            <p class="text-slate-300 text-sm sm:text-base mt-1.5">
+              Выберите главный сценарий вашего проекта — система подберёт оптимальный класс хранилища и стек.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <!-- 5 кнопок сценариев -->
+            <div class="lg:col-span-5 space-y-2.5" id="advisorButtons">
+              <!-- Генерируется JS -->
+            </div>
+
+            <!-- Карточка рекомендации -->
+            <div id="advisorCard" class="lg:col-span-7 glass rounded-2xl p-6 border-t-4 border-t-cyan-400">
+              <!-- Генерируется JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЛАЙД 11: ИТОГИ И БЛИЦ-ПРОВЕРКА ЗНАНИЙ ==================== -->
+    <section class="slide" data-title="Итоги и блиц-проверка знаний">
+      <div class="w-full h-full overflow-y-auto slide-scroll px-5 sm:px-10 pt-20 pb-24">
+        <div class="max-w-6xl mx-auto">
+          <div class="mb-5">
+            <span class="font-mono text-xs uppercase tracking-widest text-emerald-400">11 · Итоги и проверка</span>
+            <h2 class="text-2xl sm:text-4xl font-extrabold text-white mt-1">4 золотых правила и блиц-тест</h2>
+          </div>
+
+          <!-- 4 золотых правила -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            <div class="glass rounded-xl p-3.5 border-l-2 border-l-cyan-400">
+              <p class="font-mono text-xs text-cyan-300 font-bold mb-1">ПРАВИЛО 01</p>
+              <p class="text-xs text-slate-200">Храните файлы в S3, заказы в OLTP-БД, а отчёты стройте в OLAP Warehouse.</p>
+            </div>
+            <div class="glass rounded-xl p-3.5 border-l-2 border-l-rose-400">
+              <p class="font-mono text-xs text-rose-300 font-bold mb-1">ПРАВИЛО 02</p>
+              <p class="text-xs text-slate-200">Никогда не кладите <code class="font-mono">service_role</code> ключ во фронтенд — используйте RLS.</p>
+            </div>
+            <div class="glass rounded-xl p-3.5 border-l-2 border-l-amber-400">
+              <p class="font-mono text-xs text-amber-300 font-bold mb-1">ПРАВИЛО 03</p>
+              <p class="text-xs text-slate-200">Реплика спасает от сбоя железа, но от случайного <code class="font-mono">DELETE</code> спасёт только PITR-бэкап.</p>
+            </div>
+            <div class="glass rounded-xl p-3.5 border-l-2 border-l-emerald-400">
+              <p class="font-mono text-xs text-emerald-300 font-bold mb-1">ПРАВИЛО 04</p>
+              <p class="text-xs text-slate-200">Перед шардированием включите индексы, Connection Pooler и Read Replicas.</p>
+            </div>
+          </div>
+
+          <!-- Блиц-квиз из 3 вопросов -->
+          <div class="glass rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-base font-bold text-white">Блиц-проверка знаний (3 вопроса)</h3>
+              <span id="quizScore" class="font-mono text-xs font-bold px-3 py-1 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                Счёт: 0 / 3
+              </span>
+            </div>
+
+            <div id="quizContainer" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <!-- Генерируется JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= НИЖНЯЯ ПЛАВАЮЩАЯ НАВИГАЦИЯ ================= -->
+  <footer class="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[94%] max-w-2xl">
+    <div class="glass rounded-2xl px-3 sm:px-5 py-2.5 flex items-center justify-between gap-3 shadow-2xl shadow-black/60">
+      <button
+        id="prevBtn"
+        type="button"
+        onclick="prevSlide()"
+        class="px-3.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.14] disabled:opacity-30 disabled:cursor-not-allowed text-xs sm:text-sm font-semibold text-white transition cursor-pointer flex items-center gap-1.5"
+      >
+        <span>←</span> <span class="hidden sm:inline">Назад</span>
+      </button>
+
+      <!-- Точки навигации -->
+      <div id="dotIndicators" class="flex items-center gap-1.5 overflow-x-auto py-1">
+        <!-- Генерируется JS -->
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span class="hidden md:inline font-mono text-[11px] text-slate-400">← → / Space</span>
+        <button
+          id="nextBtn"
+          type="button"
+          onclick="nextSlide()"
+          class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed text-xs sm:text-sm font-semibold text-white transition cursor-pointer flex items-center gap-1.5"
+        >
+          <span class="hidden sm:inline">Далее</span> <span>→</span>
+        </button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ================= МОДАЛЬНОЕ ОКНО: ОБЗОР СЛАЙДОВ ================= -->
+  <div id="overviewModal" class="fixed inset-0 z-50 hidden bg-[#04070f]/90 backdrop-blur-xl p-5 sm:p-10 overflow-y-auto">
+    <div class="max-w-5xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <span class="font-mono text-xs text-cyan-400 uppercase tracking-widest">Навигатор</span>
+          <h2 class="text-2xl font-extrabold text-white">Обзор всех слайдов</h2>
+        </div>
+        <button
+          type="button"
+          onclick="toggleOverview(false)"
+          class="px-4 py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-sm font-bold text-white cursor-pointer"
+        >
+          ✕ Закрыть (Esc)
+        </button>
+      </div>
+
+      <div id="overviewGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        <!-- Генерируется JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= СКРИПТ ЛОГИКИ И ИНТЕРАКТИВА ================= -->
+  <script>
+    // =========================================================================
+    // 1. НАВИГАЦИЯ ПО СЛАЙДАМ, КЛАВИАТУРА И SWIPE
+    // =========================================================================
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const totalSlides = slides.length;
+    let currentSlide = 0;
+
+    const slideCounterEl = document.getElementById('slideCounter');
+    const progressBarEl = document.getElementById('progressBar');
+    const dotIndicatorsEl = document.getElementById('dotIndicators');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const overviewModal = document.getElementById('overviewModal');
+    const overviewGrid = document.getElementById('overviewGrid');
+
+    function initNavigation() {
+      // Создаём точки в нижней панели и карточки в обзоре
+      dotIndicatorsEl.innerHTML = '';
+      overviewGrid.innerHTML = '';
+
+      slides.forEach((slide, idx) => {
+        const title = slide.getAttribute('data-title') || `Слайд ${idx + 1}`;
+        const numStr = String(idx + 1).padStart(2, '0');
+
+        // Точка
+        const dot = document.createElement('button');
+        dot.type = 'button';
+        dot.setAttribute('aria-label', `Перейти к слайду ${idx + 1}: ${title}`);
+        dot.className = 'h-2 rounded-full transition-all duration-300 cursor-pointer';
+        dot.onclick = () => goToSlide(idx);
+        dotIndicatorsEl.appendChild(dot);
+
+        // Карточка обзора
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'text-left glass rounded-2xl p-4 hover:border-cyan-400/60 hover:bg-white/[0.06] transition cursor-pointer group';
+        card.innerHTML = `
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-mono text-xs font-bold text-cyan-400">${numStr}</span>
+            <span class="text-xs text-slate-500 group-hover:text-cyan-300 transition">Перейти →</span>
+          </div>
+          <p class="text-sm font-bold text-white leading-snug">${title}</p>
+        `;
+        card.onclick = () => {
+          goToSlide(idx);
+          toggleOverview(false);
+        };
+        overviewGrid.appendChild(card);
+      });
+
+      updateSlideUI();
+    }
+
+    function goToSlide(index) {
+      if (index < 0 || index >= totalSlides) return;
+      slides[currentSlide].classList.remove('active');
+      currentSlide = index;
+      slides[currentSlide].classList.add('active');
+      updateSlideUI();
+    }
+
+    function nextSlide() {
+      if (currentSlide < totalSlides - 1) goToSlide(currentSlide + 1);
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) goToSlide(currentSlide - 1);
+    }
+
+    function updateSlideUI() {
+      const numStr = String(currentSlide + 1).padStart(2, '0');
+      const totalStr = String(totalSlides).padStart(2, '0');
+      slideCounterEl.textContent = `${numStr} / ${totalStr}`;
+      progressBarEl.style.width = `${((currentSlide + 1) / totalSlides) * 100}%`;
+
+      prevBtn.disabled = currentSlide === 0;
+      nextBtn.disabled = currentSlide === totalSlides - 1;
+
+      Array.from(dotIndicatorsEl.children).forEach((dot, idx) => {
+        if (idx === currentSlide) {
+          dot.className = 'h-2 w-6 rounded-full bg-cyan-400 transition-all duration-300 cursor-pointer';
+        } else {
+          dot.className = 'h-2 w-2 rounded-full bg-white/25 hover:bg-white/50 transition-all duration-300 cursor-pointer';
+        }
+      });
+    }
+
+    function toggleOverview(forceState) {
+      const shouldShow = typeof forceState === 'boolean' ? forceState : overviewModal.classList.contains('hidden');
+      overviewModal.classList.toggle('hidden', !shouldShow);
+    }
+
+    document.getElementById('openOverviewBtn').addEventListener('click', () => toggleOverview(true));
+
+    // Клавиатурная навигация (игнорируем, если фокус в поле ввода)
+    document.addEventListener('keydown', (e) => {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === 'Escape' && !overviewModal.classList.contains('hidden')) {
+        toggleOverview(false);
+        return;
+      }
+      if (!overviewModal.classList.contains('hidden')) return;
+
+      if (e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        nextSlide();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        prevSlide();
+      }
+    });
+
+    // Свайпы для сенсорных экранов
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      const diff = touchStartX - e.changedTouches[0].screenX;
+      if (Math.abs(diff) > 65) {
+        if (diff > 0) nextSlide();
+        else prevSlide();
+      }
+    }, { passive: true });
+
+    // =========================================================================
+    // 2. СЛАЙД 2: ПЕРЕКЛЮЧАТЕЛЬ OLTP vs OLAP
+    // =========================================================================
+    const workloadData = {
+      oltp: [
+        { label: 'Задержка (Latency)', val: '1–10 мс', desc: 'Мгновенный отклик для пользователя', color: 'text-indigo-300' },
+        { label: 'Тип запросов', val: 'Точечные CRUD', desc: 'INSERT / UPDATE / SELECT по ID', color: 'text-cyan-300' },
+        { label: 'Формат хранения', val: 'Строковый (Row)', desc: 'Быстрая запись целой строки', color: 'text-emerald-300' },
+        { label: 'Объём за запрос', val: '1–100 строк', desc: 'Тысячи параллельных транзакций', color: 'text-amber-300' },
+      ],
+      olap: [
+        { label: 'Задержка (Latency)', val: '0.5–30 сек', desc: 'Допустимо для отчётов и BI', color: 'text-emerald-300' },
+        { label: 'Тип запросов', val: 'Агрегации', desc: 'SUM / AVG / GROUP BY по годам', color: 'text-cyan-300' },
+        { label: 'Формат хранения', val: 'Колоночный', desc: 'Читаются только нужные столбцы', color: 'text-indigo-300' },
+        { label: 'Объём за запрос', val: 'Миллионы строк', desc: 'Тяжёлые аналитические сканы', color: 'text-amber-300' },
+      ],
+    };
+
+    function setWorkloadMode(mode) {
+      const btnOltp = document.getElementById('btnOltp');
+      const btnOlap = document.getElementById('btnOlap');
+      const container = document.getElementById('workloadComparison');
+
+      if (mode === 'oltp') {
+        btnOltp.className = 'px-4 py-1.5 rounded-lg text-xs font-bold transition bg-indigo-500 text-white cursor-pointer';
+        btnOlap.className = 'px-4 py-1.5 rounded-lg text-xs font-bold transition text-slate-300 hover:text-white cursor-pointer';
+      } else {
+        btnOlap.className = 'px-4 py-1.5 rounded-lg text-xs font-bold transition bg-emerald-500 text-slate-950 cursor-pointer';
+        btnOltp.className = 'px-4 py-1.5 rounded-lg text-xs font-bold transition text-slate-300 hover:text-white cursor-pointer';
+      }
+
+      container.innerHTML = workloadData[mode].map(item => `
+        <div class="p-3 rounded-xl bg-[#04070f] border border-white/[0.08]">
+          <p class="text-[11px] text-slate-400 mb-1">${item.label}</p>
+          <p class="font-mono font-bold text-sm sm:text-base ${item.color}">${item.val}</p>
+          <p class="text-[11px] text-slate-400 mt-1">${item.desc}</p>
+        </div>
+      `).join('');
+    }
+
+    // =========================================================================
+    // 3. СЛАЙД 3: МОДЕЛЬ РАЗДЕЛЕНИЯ ОТВЕТСТВЕННОСТИ (SELF-HOSTED vs DBaaS)
+    // =========================================================================
+    const responsibilityLayers = [
+      { name: 'Схема данных, индексы и оптимизация SQL', self: 'dev', dbaas: 'dev' },
+      { name: 'Права доступа, RLS и безопасность ключей', self: 'dev', dbaas: 'dev' },
+      { name: 'Настройка репликации, failover и PITR-бэкапов', self: 'dev', dbaas: 'cloud' },
+      { name: 'Обновление версий PostgreSQL и патчи безопасности', self: 'dev', dbaas: 'cloud' },
+      { name: 'Мониторинг дисков, ОС Linux и сетевые правила', self: 'dev', dbaas: 'cloud' },
+      { name: 'Физические серверы, питание и дата-центр', self: 'cloud', dbaas: 'cloud' },
+    ];
+
+    function setDbaasMode(mode) {
+      const tabSelf = document.getElementById('tabSelfHosted');
+      const tabDbaas = document.getElementById('tabDbaas');
+      const stack = document.getElementById('responsibilityStack');
+
+      if (mode === 'dbaas') {
+        tabDbaas.className = 'px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition bg-cyan-500 text-slate-950 cursor-pointer';
+        tabSelf.className = 'px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition text-slate-300 hover:text-white cursor-pointer';
+      } else {
+        tabSelf.className = 'px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition bg-cyan-500 text-slate-950 cursor-pointer';
+        tabDbaas.className = 'px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition text-slate-300 hover:text-white cursor-pointer';
+      }
+
+      stack.innerHTML = responsibilityLayers.map(layer => {
+        const owner = layer[mode];
+        const isDev = owner === 'dev';
+        return `
+          <div class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl border transition-all duration-300 ${
+            isDev
+              ? 'bg-cyan-500/12 border-cyan-500/35 text-cyan-100'
+              : 'bg-indigo-500/12 border-indigo-500/35 text-indigo-100'
+          }">
+            <span class="text-xs sm:text-sm font-medium">${layer.name}</span>
+            <span class="font-mono text-[11px] font-bold px-2.5 py-0.5 rounded-md shrink-0 ${
+              isDev ? 'bg-cyan-500/25 text-cyan-200' : 'bg-indigo-500/25 text-indigo-200'
+            }">
+              ${isDev ? 'ВЫ' : 'ПРОВАЙДЕР'}
+            </span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // =========================================================================
+    // 4. СЛАЙД 5: LIVE CRUD & REST API СИМУЛЯТОР
+    // =========================================================================
+    const initialOrders = [
+      { id: 1041, customer: 'Тимур А.', item: 'Механическая клавиатура', amount: 52000, status: 'paid' },
+      { id: 1042, customer: 'Диана М.', item: 'Монитор 27" 4K', amount: 185000, status: 'new' },
+      { id: 1043, customer: 'Максим С.', item: 'USB-C Хаб 8-in-1', amount: 19500, status: 'shipped' },
+    ];
+    let orders = [];
+    let nextOrderId = 1044;
+
+    const statusCycle = { new: 'paid', paid: 'shipped', shipped: 'new' };
+    const statusStyles = {
+      new: 'bg-amber-500/15 text-amber-300 border-amber-500/35',
+      paid: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/35',
+      shipped: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35',
+    };
+
+    function resetCrudDemo() {
+      orders = initialOrders.map(o => ({ ...o }));
+      nextOrderId = 1044;
+      renderCrudTable();
+      updateInspectors(
+        '200 OK',
+        `GET /rest/v1/demo_orders?select=*&order=id.desc HTTP/1.1\nHost: demo.supabase.co\napikey: sb_publishable_anon_xxxx\nAuthorization: Bearer <user_jwt>`,
+        `SELECT id, customer, item, amount, status\nFROM public.demo_orders\nORDER BY id DESC;`
+      );
+    }
+
+    function renderCrudTable() {
+      const tbody = document.getElementById('crudTableBody');
+      const badge = document.getElementById('orderCountBadge');
+      badge.textContent = `${orders.length} запис${orders.length === 1 ? 'ь' : orders.length >= 2 && orders.length <= 4 ? 'и' : 'ей'}`;
+
+      if (orders.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-slate-500 font-mono text-xs">Таблица пуста. Создайте новый заказ слева.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = orders.map(o => `
+        <tr class="hover:bg-white/[0.03] transition">
+          <td class="py-2.5 pr-3 font-mono text-cyan-300 font-semibold">ORD-${o.id}</td>
+          <td class="py-2.5 pr-3 text-white font-medium">${escapeHtml(o.customer)}</td>
+          <td class="py-2.5 pr-3 text-slate-300">${escapeHtml(o.item)}</td>
+          <td class="py-2.5 pr-3 font-mono text-slate-200">${o.amount.toLocaleString('ru-RU')} ₸</td>
+          <td class="py-2.5 pr-3">
+            <button
+              type="button"
+              onclick="handleCycleStatus(${o.id})"
+              title="Нажмите для отправки PATCH"
+              class="font-mono text-[11px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer hover:brightness-125 transition ${statusStyles[o.status]}"
+            >
+              ${o.status} ↻
+            </button>
+          </td>
+          <td class="py-2.5 text-right">
+            <button
+              type="button"
+              onclick="handleDeleteOrder(${o.id})"
+              title="Отправить DELETE"
+              class="px-2 py-1 rounded-lg text-rose-400 hover:bg-rose-500/15 transition cursor-pointer font-mono text-xs"
+            >
+              ✕
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function handleCreateOrder(e) {
+      e.preventDefault();
+      const customerInput = document.getElementById('inputCustomer');
+      const itemInput = document.getElementById('inputItem');
+      const amountInput = document.getElementById('inputAmount');
+
+      const newOrder = {
+        id: nextOrderId++,
+        customer: customerInput.value.trim(),
+        item: itemInput.value.trim(),
+        amount: parseInt(amountInput.value, 10) || 10000,
+        status: 'new',
+      };
+
+      orders.unshift(newOrder);
+      customerInput.value = '';
+      itemInput.value = '';
+      renderCrudTable();
+
+      updateInspectors(
+        '201 Created',
+        `POST /rest/v1/demo_orders HTTP/1.1\nHost: demo.supabase.co\napikey: sb_publishable_anon_xxxx\nContent-Type: application/json\n\n${JSON.stringify({ customer: newOrder.customer, item: newOrder.item, amount: newOrder.amount, status: 'new' }, null, 2)}`,
+        `INSERT INTO public.demo_orders\n  (customer, item, amount, status)\nVALUES\n  ('${newOrder.customer}', '${newOrder.item}', ${newOrder.amount}, 'new')\nRETURNING *;`
+      );
+    }
+
+    function handleCycleStatus(id) {
+      const order = orders.find(o => o.id === id);
+      if (!order) return;
+      order.status = statusCycle[order.status];
+      renderCrudTable();
+
+      updateInspectors(
+        '200 OK',
+        `PATCH /rest/v1/demo_orders?id=eq.${id} HTTP/1.1\nHost: demo.supabase.co\napikey: sb_publishable_anon_xxxx\nContent-Type: application/json\n\n{\n  "status": "${order.status}"\n}`,
+        `UPDATE public.demo_orders\nSET status = '${order.status}'\nWHERE id = ${id}\nRETURNING *;`
+      );
+    }
+
+    function handleDeleteOrder(id) {
+      orders = orders.filter(o => o.id !== id);
+      renderCrudTable();
+
+      updateInspectors(
+        '204 No Content',
+        `DELETE /rest/v1/demo_orders?id=eq.${id} HTTP/1.1\nHost: demo.supabase.co\napikey: sb_publishable_anon_xxxx`,
+        `DELETE FROM public.demo_orders\nWHERE id = ${id};`
+      );
+    }
+
+    function updateInspectors(statusText, httpText, sqlText) {
+      document.getElementById('httpStatusPill').textContent = statusText;
+      document.getElementById('httpInspector').textContent = httpText;
+      document.getElementById('sqlInspector').textContent = sqlText;
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+
+    // =========================================================================
+    // 5. СЛАЙД 6: СИМУЛЯТОР НАГРУЗКИ (МАСШТАБИРОВАНИЕ)
+    // =========================================================================
+    function updateLoadSimulator() {
+      const rps = parseInt(document.getElementById('rpsSlider').value, 10);
+      const hasPooler = document.getElementById('chkPooler').checked;
+      const hasReplicas = document.getElementById('chkReplicas').checked;
+      const hasSharding = document.getElementById('chkSharding').checked;
+
+      document.getElementById('rpsDisplay').textContent = `${rps.toLocaleString('ru-RU')} RPS`;
+
+      // Модель расчёта: 80% чтения, 20% записи
+      let readLoad = rps * 0.8;
+      let writeLoad = rps * 0.2;
+
+      if (hasReplicas) readLoad *= 0.15;     // 3 реплики забирают основное чтение
+      if (hasSharding) {
+        writeLoad *= 0.28;                   // 4 шарда делят запись
+        readLoad *= 0.45;
+      }
+      let effectiveLoad = readLoad + writeLoad * 2.2;
+      if (hasPooler) effectiveLoad *= 0.72;  // PgBouncer снижает оверхед на коннекты
+
+      const cpu = Math.min(100, Math.max(4, Math.round((effectiveLoad / 6500) * 100)));
+      const latency = Math.min(1800, Math.max(4, Math.round(6 + Math.pow(cpu / 12, 2.35))));
+
+      const cpuVal = document.getElementById('cpuVal');
+      const cpuBar = document.getElementById('cpuBar');
+      const latencyVal = document.getElementById('latencyVal');
+      const latencyBar = document.getElementById('latencyBar');
+      const statusBadge = document.getElementById('simStatusBadge');
+      const feedback = document.getElementById('simFeedback');
+
+      cpuVal.textContent = `${cpu}%`;
+      cpuBar.style.width = `${cpu}%`;
+      latencyVal.textContent = `${latency} мс`;
+      latencyBar.style.width = `${Math.min(100, (latency / 400) * 100)}%`;
+
+      if (cpu < 65) {
+        cpuBar.className = 'h-full bg-emerald-400 transition-all duration-300';
+        cpuVal.className = 'font-mono font-bold text-emerald-300';
+        statusBadge.className = 'font-mono text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 self-start';
+        statusBadge.textContent = '● HEALTHY · Система стабильна';
+        feedback.textContent = 'Запаса мощности достаточно. Задержки низкие, узких мест нет.';
+      } else if (cpu < 88) {
+        cpuBar.className = 'h-full bg-amber-400 transition-all duration-300';
+        cpuVal.className = 'font-mono font-bold text-amber-300';
+        statusBadge.className = 'font-mono text-xs font-bold px-3 py-1.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 self-start';
+        statusBadge.textContent = '▲ DEGRADED · Растёт задержка';
+        if (!hasPooler) feedback.textContent = 'Слишком много открытых соединений — включите Connection Pooler (PgBouncer).';
+        else if (!hasReplicas) feedback.textContent = 'Чтение нагружает Primary — добавьте Read Replicas.';
+        else feedback.textContent = 'Пик по записи на один узел — пора подумать о Шардировании.';
+      } else {
+        cpuBar.className = 'h-full bg-rose-500 transition-all duration-300';
+        cpuVal.className = 'font-mono font-bold text-rose-300';
+        statusBadge.className = 'font-mono text-xs font-bold px-3 py-1.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 self-start';
+        statusBadge.textContent = '✕ BOTTLENECK · Перегрузка БД';
+        if (!hasReplicas) feedback.textContent = 'Primary захлебнулся от SELECT-запросов! Срочно включите Read Replicas и Pooler.';
+        else if (!hasSharding) feedback.textContent = 'Даже с репликами один мастер не справляется с записью. Включите Шардирование.';
+        else feedback.textContent = 'Экстремальная нагрузка! Добавьте кэш (Redis) перед БД и увеличьте число шардов.';
+      }
+    }
+
+    // =========================================================================
+    // 6. СЛАЙД 7: СИМУЛЯТОР FAILOVER И PITR
+    // =========================================================================
+    function simulateHA(state) {
+      const nodeA = document.getElementById('haNodeA');
+      const nodeB = document.getElementById('haNodeB');
+      const nodeC = document.getElementById('haNodeC');
+      const stA = document.getElementById('haStatusA');
+      const stB = document.getElementById('haStatusB');
+      const stC = document.getElementById('haStatusC');
+      const rA = document.getElementById('haRowsA');
+      const rB = document.getElementById('haRowsB');
+      const rC = document.getElementById('haRowsC');
+      const exp = document.getElementById('haExplanation');
+
+      if (state === 'normal') {
+        nodeA.className = 'rounded-2xl p-4 border-2 border-emerald-500/50 bg-emerald-500/10 transition-all duration-300 flex flex-col justify-between';
+        nodeB.className = 'rounded-2xl p-4 border-2 border-cyan-500/40 bg-cyan-500/10 transition-all duration-300 flex flex-col justify-between';
+        nodeC.className = 'rounded-2xl p-4 border-2 border-indigo-500/40 bg-indigo-500/10 transition-all duration-300 flex flex-col justify-between';
+        stA.textContent = 'PRIMARY · ONLINE';
+        stB.textContent = 'STANDBY REPLICA';
+        stC.textContent = 'PITR ARCHIVE';
+        rA.textContent = '124 850'; rA.className = 'font-bold text-white text-sm';
+        rB.textContent = '124 850'; rB.className = 'font-bold text-white text-sm';
+        rC.textContent = '124 850 (T-1 мин)';
+        exp.innerHTML = `<strong class="text-emerald-300">Штатный режим:</strong> Zone A обрабатывает транзакции, WAL-журнал непрерывно реплицируется в Zone B и архивируется в S3.`;
+      } else if (state === 'outage') {
+        nodeA.className = 'rounded-2xl p-4 border-2 border-rose-500 bg-rose-500/15 transition-all duration-300 flex flex-col justify-between opacity-75';
+        nodeB.className = 'rounded-2xl p-4 border-2 border-emerald-400 bg-emerald-500/15 transition-all duration-300 flex flex-col justify-between shadow-lg shadow-emerald-500/20';
+        nodeC.className = 'rounded-2xl p-4 border-2 border-indigo-500/40 bg-indigo-500/10 transition-all duration-300 flex flex-col justify-between';
+        stA.textContent = 'OFFLINE · СБОЙ';
+        stB.textContent = 'PROMOTED → PRIMARY';
+        stC.textContent = 'PITR ARCHIVE';
+        rA.textContent = 'Недоступен'; rA.className = 'font-bold text-rose-300 text-sm';
+        rB.textContent = '124 850'; rB.className = 'font-bold text-emerald-300 text-sm';
+        rC.textContent = '124 850 (T-1 мин)';
+        exp.innerHTML = `<strong class="text-amber-300">⚡ Автоматический Failover:</strong> Дата-центр Zone A упал. Провайдер за <strong>RTO ~20 секунд</strong> переключил DNS и сделал реплику в Zone B новым Primary. Данные сохранены!`;
+      } else if (state === 'delete') {
+        nodeA.className = 'rounded-2xl p-4 border-2 border-rose-500 bg-rose-500/15 transition-all duration-300 flex flex-col justify-between';
+        nodeB.className = 'rounded-2xl p-4 border-2 border-rose-500 bg-rose-500/15 transition-all duration-300 flex flex-col justify-between';
+        nodeC.className = 'rounded-2xl p-4 border-2 border-emerald-400 bg-emerald-500/10 transition-all duration-300 flex flex-col justify-between';
+        stA.textContent = 'PRIMARY · ПУСТО!';
+        stB.textContent = 'REPLICA · ПУСТО!';
+        stC.textContent = 'ДАННЫЕ ЦЕЛЫ';
+        rA.textContent = '0 строк!'; rA.className = 'font-bold text-rose-400 text-sm';
+        rB.textContent = '0 строк!'; rB.className = 'font-bold text-rose-400 text-sm';
+        rC.textContent = '124 850 (T-1 мин)';
+        exp.innerHTML = `<strong class="text-rose-400">💀 Реплика ≠ Резервная копия!</strong> Разработчик выполнил <code class="font-mono bg-rose-500/20 px-1.5 py-0.5 rounded">DELETE FROM orders;</code> без WHERE. Реплика послушно и мгновенно удалила все строки вслед за Primary. Спасти может только Backup (PITR).`;
+      } else if (state === 'pitr') {
+        nodeA.className = 'rounded-2xl p-4 border-2 border-emerald-400 bg-emerald-500/15 transition-all duration-300 flex flex-col justify-between';
+        nodeB.className = 'rounded-2xl p-4 border-2 border-cyan-400 bg-cyan-500/10 transition-all duration-300 flex flex-col justify-between';
+        nodeC.className = 'rounded-2xl p-4 border-2 border-emerald-400 bg-emerald-500/15 transition-all duration-300 flex flex-col justify-between shadow-lg shadow-emerald-500/20';
+        stA.textContent = 'ВОССТАНОВЛЕНО';
+        stB.textContent = 'СИНХРОНИЗИРОВАНО';
+        stC.textContent = 'PITR УСПЕШЕН';
+        rA.textContent = '124 850'; rA.className = 'font-bold text-emerald-300 text-sm';
+        rB.textContent = '124 850'; rB.className = 'font-bold text-emerald-300 text-sm';
+        rC.textContent = 'Откат на T-1 мин';
+        exp.innerHTML = `<strong class="text-emerald-300">⏪ Point-in-Time Recovery (PITR):</strong> Из S3 развёрнут последний снапшот и проиграны WAL-логи до момента <strong>за 1 минуту до случайного DELETE</strong>. Все 124 850 заказов возвращены.`;
+      }
+    }
+
+    // =========================================================================
+    // 7. СЛАЙД 8: ВИЗУАЛИЗАТОР ROW vs COLUMNAR
+    // =========================================================================
+    const sampleRows = [
+      ['#101', 'Иван', 'Алматы', '15 000'],
+      ['#102', 'Алия', 'Астана', '42 000'],
+      ['#103', 'Олег', 'Шымкент', '8 500'],
+      ['#104', 'Сауле', 'Астана', '29 000'],
+    ];
+    const headers = ['id', 'user', 'city', 'amount'];
+
+    function renderStorageGrids(scanned = false) {
+      const rowGrid = document.getElementById('rowGrid');
+      const colGrid = document.getElementById('colGrid');
+
+      let rowHtml = headers.map(h => `<div class="text-slate-500 pb-1 border-b border-white/[0.08]">${h}</div>`).join('');
+      let colHtml = headers.map(h => `<div class="${h === 'amount' ? 'text-emerald-300 font-bold' : 'text-slate-500'} pb-1 border-b border-white/[0.08]">${h}</div>`).join('');
+
+      sampleRows.forEach(r => {
+        r.forEach((cell, colIdx) => {
+          const isAmount = colIdx === 3;
+          // В Row-store при сканировании читаются ВСЕ ячейки (16 из 16)
+          const rowCellClass = scanned
+            ? (isAmount ? 'bg-amber-500/35 border-amber-400 text-white' : 'bg-amber-500/15 border-amber-500/30 text-amber-200')
+            : 'bg-white/[0.04] border-white/[0.08] text-slate-300';
+
+          // В Columnar-store читается ТОЛЬКО столбец amount (4 из 16)
+          const colCellClass = scanned
+            ? (isAmount ? 'bg-emerald-500/35 border-emerald-400 text-white font-bold' : 'bg-white/[0.02] border-white/[0.04] text-slate-600')
+            : 'bg-white/[0.04] border-white/[0.08] text-slate-300';
+
+          rowHtml += `<div class="px-2 py-1.5 rounded border transition-all duration-300 ${rowCellClass}">${cell}</div>`;
+          colHtml += `<div class="px-2 py-1.5 rounded border transition-all duration-300 ${colCellClass}">${cell}</div>`;
+        });
+      });
+
+      rowGrid.innerHTML = rowHtml;
+      colGrid.innerHTML = colHtml;
+    }
+
+    function runStorageScan() {
+      renderStorageGrids(true);
+      document.getElementById('rowScanMetric').innerHTML = `<span class="text-amber-300 font-bold">Прочитано 16/16 блоков (100% I/O)</span>`;
+      document.getElementById('colScanMetric').innerHTML = `<span class="text-emerald-300 font-bold">Прочитано 4/16 блоков (в 4x быстрее!)</span>`;
+    }
+
+    // =========================================================================
+    // 8. СЛАЙД 10: ИНТЕРАКТИВНЫЙ ПОДБОРЩИК АРХИТЕКТУРЫ
+    // =========================================================================
+    const advisorScenarios = [
+      {
+        id: 'acid',
+        title: 'Транзакции и заказы (ACID)',
+        icon: '💳',
+        choice: 'Реляционная DBaaS (OLTP)',
+        accent: 'border-t-indigo-400',
+        why: 'Строгие связи между таблицами, ACID-гарантии, уникальность ключей и быстрые точечные обновления без потери консистентности.',
+        stack: ['PostgreSQL (Supabase / RDS / Neon)', 'MySQL', 'PgBouncer'],
+        metric: 'Latency (p95 < 15 мс) и IOPS',
+        tip: 'Не храните в таблицах бинарные файлы (фото/PDF) — сохраняйте только URL-ссылку на Object Storage.',
+      },
+      {
+        id: 'bi',
+        title: 'Тяжёлые отчёты и BI-агрегации',
+        icon: '📊',
+        choice: 'Аналитическое хранилище (Data Warehouse)',
+        accent: 'border-t-emerald-400',
+        why: 'Колоночное хранение и массивно-параллельное выполнение (MPP) позволяют агрегировать миллиарды строк за секунды, не замедляя рабочую БД.',
+        stack: ['ClickHouse Cloud', 'Google BigQuery', 'Snowflake', 'dbt'],
+        metric: 'Объём сканируемых данных (ГБ / запрос)',
+        tip: 'Выгружайте данные из OLTP в Warehouse асинхронно (CDC / ELT), чтобы тяжёлый отчёт аналитика не «положил» сайт.',
+      },
+      {
+        id: 'lake',
+        title: 'Сырые логи, медиа и данные для ML',
+        icon: '🌊',
+        choice: 'Object Storage / Data Lake',
+        accent: 'border-t-cyan-400',
+        why: 'Минимальная цена за терабайт, поддержка любых форматов (JSON, Parquet, фото, видео) и подход Schema-on-Read.',
+        stack: ['AWS S3 / Cloudflare R2', 'Apache Parquet', 'Apache Iceberg (Lakehouse)'],
+        metric: 'Стоимость хранения ($/ТБ) и пропускная способность',
+        tip: 'Настройте Lifecycle-политики: автоматически переносите логи старше 90 дней в холодный архив (Glacier).',
+      },
+      {
+        id: 'peaks',
+        title: 'Резкие пики нагрузки (акции/распродажи)',
+        icon: '🚀',
+        choice: 'Autoscaling DB + Кэширование + Read Replicas',
+        accent: 'border-t-amber-400',
+        why: 'Позволяет не переплачивать за простой ночью и автоматически расширять CPU/RAM и число читающих узлов в момент запуска акции.',
+        stack: ['Redis (кэш горячих данных)', 'Read Replicas', 'Serverless Postgres (Neon / Aurora)'],
+        metric: 'Throughput (RPS) и Cache Hit Ratio (> 90%)',
+        tip: 'Прогревайте кэш до старта акции и обязательно поставьте Connection Pooler, чтобы всплеск трафика не исчерпал лимит подключений.',
+      },
+      {
+        id: 'ha',
+        title: 'Критичный простой (сервис 24/7)',
+        icon: '🛡️',
+        choice: 'Multi-AZ Репликация + Авто-Failover + PITR',
+        accent: 'border-t-rose-400',
+        why: 'Отказ одного дата-центра не останавливает бизнес, а непрерывное архивирование WAL позволяет откатить логические ошибки.',
+        stack: ['Multi-AZ Standby Replica', 'Automatic Failover', 'PITR Backup в другой регион'],
+        metric: 'RTO (< 30 сек) и RPO (0 сек)',
+        tip: 'Раз в квартал проводите учебный тест восстановления из бэкапа (Game Day). Непроверенный бэкап — это не бэкап.',
+      },
+    ];
+
+    function selectAdvisor(id) {
+      const buttonsEl = document.getElementById('advisorButtons');
+      const cardEl = document.getElementById('advisorCard');
+      const active = advisorScenarios.find(s => s.id === id) || advisorScenarios[0];
+
+      buttonsEl.innerHTML = advisorScenarios.map(s => {
+        const isSelected = s.id === active.id;
+        return `
+          <button
+            type="button"
+            onclick="selectAdvisor('${s.id}')"
+            class="w-full text-left px-4 py-3.5 rounded-xl border transition flex items-center justify-between gap-3 cursor-pointer ${
+              isSelected
+                ? 'bg-cyan-500/15 border-cyan-400 text-white shadow-lg shadow-cyan-500/10'
+                : 'glass text-slate-300 hover:bg-white/[0.06] hover:text-white'
+            }"
+          >
+            <span class="flex items-center gap-3 text-sm font-bold">
+              <span class="text-lg">${s.icon}</span>
+              ${s.title}
+            </span>
+            <span class="font-mono text-xs ${isSelected ? 'text-cyan-300' : 'text-slate-500'}">→</span>
+          </button>
+        `;
+      }).join('');
+
+      cardEl.className = `lg:col-span-7 glass rounded-2xl p-6 border-t-4 ${active.accent}`;
+      cardEl.innerHTML = `
+        <div class="flex items-center gap-2 mb-2">
+          <span class="font-mono text-xs uppercase tracking-wider text-cyan-300">Рекомендуемый выбор</span>
+        </div>
+        <h3 class="text-2xl font-extrabold text-white mb-3">${active.icon} ${active.choice}</h3>
+        <p class="text-sm text-slate-300 leading-relaxed mb-5">${active.why}</p>
+
+        <div class="mb-5">
+          <p class="font-mono text-[11px] uppercase text-slate-400 mb-2">Реальный стек технологий</p>
+          <div class="flex flex-wrap gap-2">
+            ${active.stack.map(tech => `<span class="font-mono text-xs px-3 py-1.5 rounded-lg bg-white/[0.06] border border-white/[0.1] text-cyan-200">${tech}</span>`).join('')}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div class="p-3.5 rounded-xl bg-[#04070f] border border-white/[0.08]">
+            <p class="font-mono text-slate-400 uppercase mb-1">Ключевая метрика</p>
+            <p class="font-bold text-emerald-300 text-sm">${active.metric}</p>
+          </div>
+          <div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25">
+            <p class="font-mono text-amber-300 uppercase mb-1">Практический совет</p>
+            <p class="text-slate-200 leading-snug">${active.tip}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 9. СЛАЙД 11: БЛИЦ-КВИЗ (3 ВОПРОСА)
+    // =========================================================================
+    const quizQuestions = [
+      {
+        q: '1. Спасёт ли горячая Standby-реплика от случайного DELETE FROM orders без WHERE?',
+        options: [
+          'Да, реплика автоматически заблокирует удаление',
+          'Нет, удаление мгновенно скопируется — нужен PITR-бэкап',
+        ],
+        correct: 1,
+        explain: 'Реплика повторяет все транзакции с Primary. От логических ошибок спасает только резервная копия (PITR).',
+      },
+      {
+        q: '2. Как правильно хранить товары интернет-магазина в облаке?',
+        options: [
+          'Фотографии в Object Storage (S3), а заказы и цены в PostgreSQL',
+          'Хранить все фото прямо в колонке BYTEA таблицы PostgreSQL',
+        ],
+        correct: 0,
+        explain: 'Объектное хранилище + CDN дешевле и быстрее для медиа, а PostgreSQL оптимален для структурированных транзакций.',
+      },
+      {
+        q: '3. Можно ли использовать service_role (secret) ключ Supabase во фронтенде?',
+        options: [
+          'Да, если скрыть его в отдельном JS-файле',
+          'Никогда! Он обходит RLS и даёт полный доступ к БД',
+        ],
+        correct: 1,
+        explain: 'Всё, что попало в браузер, доступно пользователю. Во фронтенде допустим только anon ключ + строгие RLS-политики.',
+      },
+    ];
+
+    const quizAnswers = {};
+
+    function renderQuiz() {
+      const container = document.getElementById('quizContainer');
+      const scoreEl = document.getElementById('quizScore');
+
+      const correctCount = Object.entries(quizAnswers).filter(([idx, ans]) => quizQuestions[idx].correct === ans).length;
+      scoreEl.textContent = `Счёт: ${correctCount} / ${quizQuestions.length}`;
+
+      container.innerHTML = quizQuestions.map((item, qIdx) => {
+        const chosen = quizAnswers[qIdx];
+        const answered = typeof chosen === 'number';
+
+        return `
+          <div class="p-4 rounded-xl bg-[#04070f] border border-white/[0.08] flex flex-col justify-between">
+            <div>
+              <p class="text-xs sm:text-sm font-bold text-white mb-3 leading-snug">${item.q}</p>
+              <div class="space-y-2">
+                ${item.options.map((opt, oIdx) => {
+                  let btnClass = 'bg-white/[0.04] hover:bg-white/[0.09] border-white/[0.1] text-slate-300';
+                  if (answered) {
+                    if (oIdx === item.correct) btnClass = 'bg-emerald-500/20 border-emerald-400 text-emerald-200 font-semibold';
+                    else if (oIdx === chosen) btnClass = 'bg-rose-500/20 border-rose-400 text-rose-200';
+                    else btnClass = 'bg-white/[0.02] border-white/[0.05] text-slate-500';
+                  }
+                  return `
+                    <button
+                      type="button"
+                      onclick="answerQuiz(${qIdx}, ${oIdx})"
+                      class="w-full text-left px-3 py-2 rounded-lg border text-xs transition cursor-pointer ${btnClass}"
+                    >
+                      ${opt}
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+            ${answered ? `<p class="mt-3 pt-2.5 border-t border-white/[0.08] text-[11px] text-slate-300 leading-relaxed">${chosen === item.correct ? '<strong class="text-emerald-400">Верно!</strong> ' : '<strong class="text-rose-400">Неверно.</strong> '}${item.explain}</p>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function answerQuiz(qIdx, oIdx) {
+      quizAnswers[qIdx] = oIdx;
+      renderQuiz();
+    }
+
+    // =========================================================================
+    // 10. ИНИЦИАЛИЗАЦИЯ ПРИ ЗАГРУЗКЕ
+    // =========================================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      initNavigation();
+      setWorkloadMode('oltp');
+      setDbaasMode('dbaas');
+      resetCrudDemo();
+      updateLoadSimulator();
+      simulateHA('normal');
+      renderStorageGrids(false);
+      selectAdvisor('acid');
+      renderQuiz();
+    });
+  </script>
+</body>
+</html>
